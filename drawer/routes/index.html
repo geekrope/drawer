@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <meta charset="utf-8" />
+    <title></title>
+
+    <script>
+        let ctx;
+        window.onload = () =>
+        {
+            const view = document.getElementById("view");
+            ctx = view.getContext("2d");
+
+            let transactionId = "";
+            let drawing = false;
+
+            view.addEventListener("mousedown", async (e) =>
+            {
+                transactionId = await (await fetch("/transaction?color=000000")).text();
+                drawing = true;
+
+                fetch(`/writePoint?point={"x":${e.clientX},"y":${e.clientY}}&id=${transactionId}&end=false`, { method: "POST" });
+            });
+            view.addEventListener("mousemove", async (e) =>
+            {
+                if (drawing)
+                {
+                    fetch(`/writePoint?point={"x":${e.clientX},"y":${e.clientY}}&id=${transactionId}&end=false`, { method: "POST" });
+                }                
+            });
+            view.addEventListener("mouseup", async (e) =>
+            {
+                fetch(`/writePoint?point={"x":${e.clientX},"y":${e.clientY}}&id=${transactionId}&end=true`, { method: "POST" });
+
+                drawing = false;
+            });
+
+            setInterval(async () =>
+            {
+                const data = fetch(`/data`, { method: "GET" });
+                const json = await (await data).json();
+                refresh(json.openedPaths, json.closedPaths);
+            }, 10);
+        }
+
+        function refresh(openedPaths ,closedPaths)
+        {
+            const thickness = 5;
+            const circleThickness = 2;
+            const circleRadius = 10;
+
+            ctx.clearRect(0, 0, 2560, 1440);
+
+            openedPaths.concat(closedPaths).forEach((value) =>
+            {
+                if (value._points.length > 0)
+                {
+                    ctx.strokeStyle = value._color;
+                    ctx.lineWidth = thickness;
+
+                    const startPoint = value._points[0];
+
+                    ctx.beginPath();
+                    ctx.moveTo(startPoint.x, startPoint.y);
+
+                    for (let index = 1; index < value._points.length; index++)
+                    {
+                        const point = value._points[index];
+                        ctx.lineTo(point.x, point.y);
+                    }
+
+                    ctx.closePath();
+                    ctx.stroke();
+                }
+            });
+
+            openedPaths.forEach((value) =>
+            {
+                if (value._points.length > 0)
+                {
+                    ctx.strokeStyle = "#000000";
+                    ctx.lineWidth = circleThickness;
+
+                    const startPoint = value._points[value._points.length - 1];
+
+                    ctx.beginPath();
+                    ctx.arc(startPoint.x - circleRadius, startPoint.y - circleRadius, circleRadius, 0, Math.PI * 2);
+                    ctx.closePath();
+                    ctx.stroke();
+                }
+            });
+        }
+    </script>
+</head>
+<body>
+    <canvas id="view" style="user-select:none" width="2560" height="1440" />
+</body>
+</html>
