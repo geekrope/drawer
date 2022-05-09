@@ -11,22 +11,55 @@
         let userId = "";
         let drawing = false;
         let view;
+        let stack = [];
 
-        window.onload = async () =>
+        window.onload = () =>
         {
             view = document.getElementById("view");
-            ctx = view.getContext("2d");  
+            ctx = view.getContext("2d");
 
-            userId = await (await fetch("/user")).text();
+            async function getId()
+            {
+                userId = await (await fetch("/user")).text();
+
+                setInterval(async () =>
+                {
+                    const data = fetch(`/data?userId=${userId}`, { method: "GET" });
+                    const json = await (await data).json();
+                    refresh(json.openedPaths, json.closedPaths);
+
+                    if (stack.length > 0)
+                    {
+                        stack[0]();
+                        stack.splice(0);
+                    }                    
+                }, 100);
+            }
+
+            getId();
 
             view.addEventListener("mousedown", async (e) =>
             {
-                transactionId = await (await fetch(`/transaction?color=000000&userId=${userId}`)).text();
+                stack.push(() =>
+                {
+                    const res = fetch(`/transaction?color=000000&userId=${userId}`);
+
+                    res.then((value) =>
+                    {
+                        value.text().then((value) =>
+                        {
+                            transactionId = value
+                        })
+                    });
+                });
                 drawing = true;
 
                 const point = getPoint(e);
 
-                fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=false`, { method: "POST" });
+                stack.push(() =>
+                {
+                    fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=false`, { method: "POST" })
+                });
             });
             view.addEventListener("mousemove", async (e) =>
             {
@@ -34,14 +67,20 @@
 
                 if (drawing)
                 {
-                    fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=false`, { method: "POST" });
+                    stack.push(() =>
+                    {
+                        fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=false`, { method: "POST" })
+                    });
                 }
             });
             view.addEventListener("mouseup", async (e) =>
             {
                 const point = getPoint(e);
 
-                fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=true`, { method: "POST" });
+                stack.push(() =>
+                {
+                    fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=true`, { method: "POST" })
+                });
 
                 drawing = false;
             });
@@ -54,13 +93,6 @@
 
                 return { x: x, y: y };
             }
-
-            setInterval(async () =>
-            {
-                const data = fetch(`/data`, { method: "GET" });
-                const json = await (await data).json();
-                refresh(json.openedPaths, json.closedPaths);
-            }, 100);
         }
 
         function refresh(openedPaths, closedPaths)

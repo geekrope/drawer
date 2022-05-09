@@ -58,6 +58,7 @@ class User {
         this._id = id;
         this._openedPaths = [];
         this._closedPaths = [];
+        this.worker = new Worker();
     }
     get openedPaths() {
         return this._openedPaths;
@@ -98,6 +99,11 @@ class User {
 class Canvas {
     constructor() {
         this._users = [];
+        setInterval(() => {
+            this._users.forEach((value) => {
+                value.worker.resolve();
+            });
+        }, 10);
     }
     get openedPaths() {
         let paths = [];
@@ -122,6 +128,27 @@ class Canvas {
         return this._users.find((value) => { return (value.id == userId); });
     }
 }
+class Worker {
+    constructor() {
+        this.maxRequestsStack = 100;
+        this._requests = [];
+    }
+    add(request) {
+        if (this._requests.length < this.maxRequestsStack) {
+            this._requests.push(request);
+        }
+        else {
+            console.log(`Too many requests (> ${this.maxRequestsStack})`);
+        }
+    }
+    resolve() {
+        if (this._requests.length > 0) {
+            const request = this._requests[0];
+            request.handler(request.request, request.response, () => { });
+            this._requests.splice(0);
+        }
+    }
+}
 class Validator {
     static colorValidator(color) {
         const validator = /^[0-9A-F]{6}$/i;
@@ -140,52 +167,76 @@ router.get("/user", (request, response) => {
     response.send(canvas.declareUser()).end();
 });
 router.get("/transaction", (request, response) => {
-    const color = request.query.color;
-    const userId = request.query.userId;
-    if (color && userId) {
-        const user = canvas.find(userId);
-        if (Validator.colorValidator(color) && user) {
-            response.send(user.declarePath(color)).end();
-        }
-        else {
-            response.sendStatus(400).end();
-        }
+    const userId = decodeURI(request.query.userId);
+    const user = userId ? canvas.find(userId) : undefined;
+    if (user) {
+        user.worker.add({
+            handler: (request, response) => {
+                const color = decodeURI(request.query.color);
+                if (color) {
+                    if (Validator.colorValidator(color) && user) {
+                        response.send(user.declarePath(color)).end();
+                    }
+                    else {
+                        response.sendStatus(400).end();
+                    }
+                }
+                else {
+                    response.sendStatus(400).end();
+                }
+            }, request: request, response: response
+        });
     }
     else {
         response.sendStatus(400).end();
     }
 });
 router.get("/data", (request, response) => {
-    response.send({ openedPaths: canvas.openedPaths, closedPaths: canvas.closedPaths });
+    const userId = decodeURI(request.query.userId);
+    const user = userId ? canvas.find(userId) : undefined;
+    if (user) {
+        user.worker.add({
+            handler: (request, response) => {
+                response.send({ openedPaths: canvas.openedPaths, closedPaths: canvas.closedPaths });
+            }, request: request, response: response
+        });
+    }
+    else {
+        response.sendStatus(400).end();
+    }
 });
 router.get("/", (request, response) => {
     response.sendFile(__dirname + "/index.html");
 });
 router.post("/writePoint", (request, response) => {
-    const point = decodeURI(request.query.point);
-    const id = decodeURI(request.query.id);
     const userId = decodeURI(request.query.userId);
-    const end = decodeURI(request.query.end);
-    if (point && id && end) {
-        const user = canvas.find(userId);
-        if (user) {
-            const polyline = user.find(id);
-            if (Validator.pointValidator(point) && polyline && Boolean(end)) {
-                if (end == "true") {
-                    polyline.endPath(JSON.parse(point));
+    const user = userId ? canvas.find(userId) : undefined;
+    if (user) {
+        user.worker.add({
+            handler: (request, response) => {
+                const point = decodeURI(request.query.point);
+                const id = decodeURI(request.query.id);
+                const end = decodeURI(request.query.end);
+                if (point && id && end) {
+                    const polyline = user.find(id);
+                    if (Validator.pointValidator(point) && polyline && Boolean(end)) {
+                        if (end == "true") {
+                            polyline.endPath(JSON.parse(point));
+                        }
+                        else {
+                            polyline.writePoint(JSON.parse(point));
+                        }
+                        response.sendStatus(200).end();
+                    }
+                    else {
+                        response.sendStatus(400).end();
+                    }
                 }
                 else {
-                    polyline.writePoint(JSON.parse(point));
+                    response.sendStatus(400).end();
                 }
-                response.sendStatus(200).end();
-            }
-            else {
-                response.sendStatus(400).end();
-            }
-        }
-        else {
-            response.sendStatus(400).end();
-        }
+            }, request: request, response: response
+        });
     }
     else {
         response.sendStatus(400).end();
