@@ -1,8 +1,18 @@
 import express = require('express');
-import canvasApi = require('canvas');
-import fs = require('fs');
+import crypto = require('crypto');
 
 const router = express.Router();
+
+function randomKey()
+{
+	const bytes = crypto.randomBytes(16);
+
+	let key = "";
+
+	bytes.forEach((byte) => { key += byte.toString(16) });
+
+	return key;
+}
 
 interface OnModified
 {
@@ -67,10 +77,14 @@ class Polyline
 			this.onModified(point, this);
 		}
 	}
-	public endPath(point: Point)
+	public endPath(point?: Point)
 	{
-		this._points.push(point);
 		this._ended = true;
+
+		if (point)
+		{
+			this._points.push(point);
+		}
 
 		if (this.onEnded)
 		{
@@ -88,12 +102,25 @@ class Polyline
 	}
 }
 
-class Canvas
+class User
 {
+	private _id: string;
+
 	private _openedPaths: Polyline[];
 	private _closedPaths: Polyline[];
-	private _canvas: canvasApi.Canvas;
-	private _canvasContext: canvasApi.CanvasRenderingContext2D;
+
+	public get openedPaths(): Polyline[]
+	{
+		return this._openedPaths;
+	}
+	public get closedPaths(): Polyline[]
+	{
+		return this._closedPaths;
+	}
+	public get id(): string
+	{
+		return this._id;
+	}
 
 	private findIndex(id: string): number
 	{
@@ -108,90 +135,85 @@ class Canvas
 			this._openedPaths.splice(index);
 			this._closedPaths.push(sender);
 		}
-
-		this.refresh();
 	}
-	private refresh()
+	private pathModified(point: Point, sender: Polyline)
 	{
-		const thickness = 5;
-		const circleThickness = 2;
-		const circleRadius = 5;
 
-		this._canvasContext.clearRect(0, 0, this._canvas.width, this._canvas.height);
-
-		this._openedPaths.concat(this._closedPaths).forEach((value) =>
-		{
-			if (value.points.length > 0)
-			{
-				this._canvasContext.strokeStyle = value.color;
-				this._canvasContext.lineWidth = thickness;
-
-				const startPoint = value.points[0];
-
-				this._canvasContext.beginPath();
-				this._canvasContext.moveTo(startPoint.x, startPoint.y);
-
-				for (let index = 1; index < value.points.length; index++)
-				{
-					const point = value.points[index];
-					this._canvasContext.lineTo(point.x, point.y);
-				}
-
-				this._canvasContext.closePath();
-				this._canvasContext.stroke();
-			}
-		});
-
-		this._openedPaths.forEach((value) =>
-		{
-			if (value.points.length > 0)
-			{
-				this._canvasContext.strokeStyle = "#000000";
-				this._canvasContext.lineWidth = circleThickness;
-
-				const startPoint = value.points[value.points.length - 1];
-
-				this._canvasContext.beginPath();
-				this._canvasContext.arc(startPoint.x + circleRadius, startPoint.y + circleRadius, circleRadius, 0, Math.PI * 2);
-				this._canvasContext.closePath();
-				this._canvasContext.stroke();
-			}
-		});
 	}
 
-	public get openedPaths(): Polyline[]
-	{
-		return this._openedPaths;
-	}
-	public get closedPaths(): Polyline[]
-	{
-		return this._closedPaths;
-	}
-
-	public find(id: string): Polyline | undefined
-	{
-		return this._openedPaths.find((value) => { return (value.id == id); });
-	}
 	public declarePath(color: string): string
 	{
+		this._openedPaths.forEach((value) =>
+		{
+			value.endPath();
+		});
+
 		const id = (this._openedPaths.length + this._closedPaths.length).toString(16);
 		const polyline = new Polyline(color, id);
 
 		polyline.onEnded = this.pathClosed.bind(this);
-		polyline.onModified = this.refresh.bind(this);
+		polyline.onModified = this.pathModified.bind(this);
 
 		this._openedPaths.push(polyline);
 
 		return id;
 	}
-
-	public constructor(canvas: canvasApi.Canvas)
+	public find(id: string): Polyline | undefined
 	{
+		return this._openedPaths.find((value) => { return (value.id == id); });
+	}
+
+	public constructor(id: string)
+	{
+		this._id = id;
 		this._openedPaths = [];
 		this._closedPaths = [];
+	}
+}
 
-		this._canvas = canvas;
-		this._canvasContext = canvas.getContext("2d");
+class Canvas
+{
+	private _users: User[];
+
+	public get openedPaths(): Polyline[]
+	{
+		let paths: Polyline[] = [];
+
+		this._users.forEach((value) =>
+		{
+			paths = paths.concat(value.openedPaths);
+		});
+
+		return paths;
+	}
+	public get closedPaths(): Polyline[]
+	{
+		let paths: Polyline[] = [];
+
+		this._users.forEach((value) =>
+		{
+			paths = paths.concat(value.closedPaths);
+		});
+
+		return paths;
+	}
+
+	public declareUser(): string
+	{
+		const user = new User(randomKey());
+
+		this._users.push(user);
+
+		return user.id;
+	}
+	public find(userId: string): User | undefined
+	{
+		return this._users.find((value) => { return (value.id == userId); });
+	}
+
+	public constructor()
+	{
+		this._users = [];
 	}
 }
 
@@ -214,22 +236,27 @@ class Validator
 	}
 }
 
-const renderedCanvas = canvasApi.createCanvas(2560, 1440, 'svg');
-const canvas = new Canvas(renderedCanvas);
+const canvas = new Canvas();
 
+router.get("/user", (request: express.Request, response: express.Response) =>
+{
+	response.send(canvas.declareUser()).end();
+});
 router.get("/transaction", (request: express.Request, response: express.Response) =>
 {
-	const color = request.query.color;
+	const color = <string>request.query.color;
+	const userId = <string>request.query.userId;
 
-	if (color && typeof color == "string")
+	if (color && userId)
 	{
-		if (Validator.colorValidator(color))
+		const user = canvas.find(userId);
+
+		if (Validator.colorValidator(color) && user)
 		{
-			response.send(canvas.declarePath(<string>color)).end();
+			response.send(user.declarePath(color)).end();
 		}
 		else
 		{
-			response.statusMessage = "Invalid color";
 			response.sendStatus(400).end();
 		}
 	}
@@ -237,13 +264,6 @@ router.get("/transaction", (request: express.Request, response: express.Response
 	{
 		response.sendStatus(400).end();
 	}
-});
-router.get("/img.svg", (request: express.Request, response: express.Response) =>
-{
-	fs.writeFile(__dirname + '/image.svg', renderedCanvas.toBuffer(), () =>
-	{
-		response.sendFile(__dirname + "/image.svg");
-	});
 });
 router.get("/data", (request: express.Request, response: express.Response) =>
 {
@@ -258,23 +278,33 @@ router.post("/writePoint", (request: express.Request, response: express.Response
 {
 	const point = decodeURI(<string>request.query.point);
 	const id = decodeURI(<string>request.query.id);
+	const userId = decodeURI(<string>request.query.userId);
 	const end = decodeURI(<string>request.query.end);
 
 	if (point && id && end)
 	{
-		const polyline = canvas.find(id);
+		const user = canvas.find(userId);
 
-		if (Validator.pointValidator(point) && polyline && Boolean(end))
+		if (user)
 		{
-			if (end == "true")
+			const polyline = user.find(id);
+
+			if (Validator.pointValidator(point) && polyline && Boolean(end))
 			{
-				polyline.endPath(<Point>JSON.parse(point));
+				if (end == "true")
+				{
+					polyline.endPath(<Point>JSON.parse(point));
+				}
+				else
+				{
+					polyline.writePoint(<Point>JSON.parse(point));
+				}
+				response.sendStatus(200).end();
 			}
 			else
 			{
-				polyline.writePoint(<Point>JSON.parse(point));
+				response.sendStatus(400).end();
 			}
-			response.sendStatus(200).end();
 		}
 		else
 		{

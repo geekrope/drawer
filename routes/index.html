@@ -7,46 +7,65 @@
 
     <script>
         let ctx;
-        window.onload = () =>
-        {
-            const view = document.getElementById("view");
-            ctx = view.getContext("2d");
+        let transactionId = "";
+        let userId = "";
+        let drawing = false;
+        let view;
 
-            let transactionId = "";
-            let drawing = false;
+        window.onload = async () =>
+        {
+            view = document.getElementById("view");
+            ctx = view.getContext("2d");  
+
+            userId = await (await fetch("/user")).text();
 
             view.addEventListener("mousedown", async (e) =>
             {
-                transactionId = await (await fetch("/transaction?color=000000")).text();
+                transactionId = await (await fetch(`/transaction?color=000000&userId=${userId}`)).text();
                 drawing = true;
 
-                fetch(`/writePoint?point={"x":${e.clientX},"y":${e.clientY}}&id=${transactionId}&end=false`, { method: "POST" });
+                const point = getPoint(e);
+
+                fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=false`, { method: "POST" });
             });
             view.addEventListener("mousemove", async (e) =>
             {
+                const point = getPoint(e);
+
                 if (drawing)
                 {
-                    fetch(`/writePoint?point={"x":${e.clientX},"y":${e.clientY}}&id=${transactionId}&end=false`, { method: "POST" });
-                }                
+                    fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=false`, { method: "POST" });
+                }
             });
             view.addEventListener("mouseup", async (e) =>
             {
-                fetch(`/writePoint?point={"x":${e.clientX},"y":${e.clientY}}&id=${transactionId}&end=true`, { method: "POST" });
+                const point = getPoint(e);
+
+                fetch(`/writePoint?point={"x":${point.x},"y":${point.y}}&userId=${userId}&id=${transactionId}&end=true`, { method: "POST" });
 
                 drawing = false;
             });
+
+            function getPoint(e)
+            {
+                var rect = e.target.getBoundingClientRect();
+                var x = e.clientX - rect.left;
+                var y = e.clientY - rect.top;
+
+                return { x: x, y: y };
+            }
 
             setInterval(async () =>
             {
                 const data = fetch(`/data`, { method: "GET" });
                 const json = await (await data).json();
                 refresh(json.openedPaths, json.closedPaths);
-            }, 10);
+            }, 100);
         }
 
-        function refresh(openedPaths ,closedPaths)
+        function refresh(openedPaths, closedPaths)
         {
-            const thickness = 5;
+            const thickness = 1;
             const circleThickness = 2;
             const circleRadius = 10;
 
@@ -70,14 +89,13 @@
                         ctx.lineTo(point.x, point.y);
                     }
 
-                    ctx.closePath();
                     ctx.stroke();
                 }
             });
 
             openedPaths.forEach((value) =>
             {
-                if (value._points.length > 0)
+                if (value._points.length > 0 && value._id != transactionId)
                 {
                     ctx.strokeStyle = "#000000";
                     ctx.lineWidth = circleThickness;
@@ -85,8 +103,7 @@
                     const startPoint = value._points[value._points.length - 1];
 
                     ctx.beginPath();
-                    ctx.arc(startPoint.x - circleRadius, startPoint.y - circleRadius, circleRadius, 0, Math.PI * 2);
-                    ctx.closePath();
+                    ctx.arc(startPoint.x, startPoint.y, circleRadius, 0, Math.PI * 2);
                     ctx.stroke();
                 }
             });
@@ -94,6 +111,6 @@
     </script>
 </head>
 <body>
-    <canvas id="view" style="user-select:none" width="2560" height="1440" />
+    <canvas id="view" style="cursor:crosshair" width="2560" height="1440" />
 </body>
 </html>
